@@ -4,6 +4,7 @@ import { contentHash, planImport } from '../utils/dedupe.js'
 import { formatDate, formatDateTime } from '../utils/dates.js'
 import { formatInt, formatMoney } from '../utils/money.js'
 import { buildRecords, inspectFile, missingFields } from '../utils/parseFile.js'
+import { fetchSampleFiles } from '../utils/sampleData.js'
 import { Alert, Button, Card, Select } from './ui/index.jsx'
 
 const ACCEPT = '.csv,.txt,.xlsx,.xls,.xlsm'
@@ -174,6 +175,33 @@ export default function UploadPanel({ records, files, onImport }) {
     setQueue((q) => [...q, ...list])
   }
 
+  // Importa los 3 archivos de ejemplo con el mismo flujo que uno propio (parseo → huella → antiduplicados)
+  const loadSamples = async () => {
+    setError(null)
+    setBusy(true)
+    try {
+      let knownRecords = records
+      let knownFiles = files
+      let imported = 0
+      for (const file of await fetchSampleFiles()) {
+        const d = await inspectFile(file)
+        const b = buildRecords(d.matrix, d.headerRow, d.mapping)
+        const hash = await contentHash(b.records)
+        const plan = planImport(b.records, hash, knownRecords, knownFiles)
+        if (plan.fileAlreadyLoaded || !plan.fresh.length) continue
+        onImport({ name: file.name, hash, fresh: plan.fresh, duplicates: plan.duplicates, discarded: b.discarded })
+        knownRecords = [...knownRecords, ...plan.fresh]
+        knownFiles = [...knownFiles, { hash, name: file.name }]
+        imported += plan.fresh.length
+      }
+      setNotice(imported ? `Datos de ejemplo cargados: ${formatInt(imported)} operaciones.` : 'Los datos de ejemplo ya estaban cargados.')
+    } catch {
+      setError('No se pudieron cargar los datos de ejemplo.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const finish = () => { setDraft(null); setAnalysis(null) }
   const confirm = () => {
     const { plan, hash, built: b } = analysis
@@ -198,6 +226,14 @@ export default function UploadPanel({ records, files, onImport }) {
           <Button variant="primary" onClick={() => inputRef.current?.click()} disabled={busy}>
             {busy ? 'Leyendo…' : 'Elegir archivos'}
           </Button>
+          <button
+            type="button"
+            onClick={loadSamples}
+            disabled={busy}
+            className="text-xs font-medium text-slate-600 underline underline-offset-2 hover:text-slate-900 disabled:opacity-50"
+          >
+            o cargar los datos de ejemplo
+          </button>
           <input
             ref={inputRef}
             type="file"
